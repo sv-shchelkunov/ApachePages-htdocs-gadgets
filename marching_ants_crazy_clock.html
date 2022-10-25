@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Amenobraser,SHCH marching ants crazy clock</title>
+
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+	<style>
+		details {
+			padding:2px 0px 8px 0px;
+			border: 2px dotted gray;
+			margin: 1px 0px 1px 0px;
+		}
+
+		.wall {
+			display: flex;
+		  justify-content: center;
+		  align-items: center;
+		}
+		.frame {
+			display: flex;
+			flex-wrap: wrap;
+		  justify-content: center;
+		  align-items: center;
+			padding:2px 0px 2px 0px;
+			margin: 1px 0px 1px 0px;
+		}
+		canvas {
+			border:3px solid green;
+		}
+	</style>
+
+	<script>
+		var ground;
+		var ground_ctx;
+		const ground_color = '#ffff99'; // fill style for ground_ctx
+		var ground_color_timer;
+		const ground_color_timer_interval = 4111; // change color of ground every ~4 seconds, if clock-mode is active
+		var ground_color_buttons = []; // array of radio buttons with name='ground_color'
+
+		const ants_color = 'black'; // stroke style for ground_ctx
+		var ants_color_timer;
+		const ants_color_timer_interval = 3111; // change color of ants every ~3 seconds, if clock-mode is active
+		var ants_color_buttons = []; // array of radio buttons with name='ants_color'
+
+		const ants_padding = 10;
+		let ants_offset = 0;
+
+		let ants_direction = -1; // can be 1 or -1
+		var ants_direction_flip_timer;
+		const ants_direction_flip_timer_interval = 5111; // flip ~every 5 seconds, if clock-mode is active
+		var ants_direction_button;
+
+		let ants_speed_factor = 35;
+		const ants_speed_factor_step = 4;
+		const ants_speed_factor_max = 70; // slowest speed
+		const ants_speed_factor_min = 2; // fastest speed
+		var ants_speed_factor_timer;
+		const ants_speed_factor_timer_interval = 2111; // speed up or down ~every 2 seconds, if lock-mode is active
+		let ants_speed_factor_switch = '+';
+		var ants_speed_factor_button_plus; // brings the speed factor down, and increases the speed
+		var ants_speed_factor_button_minus; // brings the speed factor up, and reduces the speed
+
+		let ants_width = 5;
+		const ants_width_step = 1;
+		const ants_width_max = 15;
+		const ants_width_min = 1;
+		var ants_width_timer;
+		const ants_width_timer_interval = 1111; // change ants width ~every 1 second, if lock-mode is active
+		let ants_width_switch = '+';
+		var ants_width_button_plus; // increases the width of ants
+		var ants_width_button_minus; // reduces the width of ants
+
+		var clock_button;
+		let clock_active = -1; // either 1 or -1
+
+		const clock_color = 'black';
+		var clock_color_timer;
+		const clock_color_timer_interval = 7111; // change color of clock every ~7 seconds, if clock-mode is active
+		var clock_color_buttons = []; // array of radio buttons with name='clock_color'
+
+		const clock_line_width = 1;
+		const clock_font_height = 40;
+		const clock_font = 'bold ' + clock_font_height + 'px Arial';
+
+		var display_1; // paragraph or similar element to dipslay the current stats, if needed
+
+		const fBodyOnLoad=function() {
+
+			ground = document.getElementById('ground');
+			ground_ctx = ground.getContext('2d');
+
+			fActivateColorButtons();
+
+			ants_direction_button = document.getElementById('ants_direction_button');
+			ants_direction_button.addEventListener('click', fFlipDirection);
+
+			ants_speed_factor_button_plus = document.getElementById('ants_speed_factor_button_plus');
+			ants_speed_factor_button_minus = document.getElementById('ants_speed_factor_button_minus');
+			ants_speed_factor_button_plus.addEventListener('click', ()=>fAdjustSpeedFactor('+'));
+			ants_speed_factor_button_minus.addEventListener('click', ()=>fAdjustSpeedFactor('-'));
+			fAdjustSpeedFactor(''); // make sure ants_speed_factor is between max and min
+
+ 			ants_width_button_plus = document.getElementById('ants_width_button_plus');
+			ants_width_button_minus = document.getElementById('ants_width_button_minus');
+			ants_width_button_plus.addEventListener('click', ()=>fAdjustAntsWidth('+'));
+			ants_width_button_minus.addEventListener('click', ()=>fAdjustAntsWidth('-'));
+			fAdjustAntsWidth(''); // make sure ants_width is between max and min
+
+			clock_button = document.getElementById('clock_button');
+			clock_button.addEventListener('click', ()=> {fDoCrazyClock(clock_button);});
+
+			display_1 = document.getElementById('display_1');
+			fMarch();
+			// end of function fBodyOnLoad(...)
+		}
+
+		const fShowTime = function() {
+			_today = new Date();
+			_day_month_year = _today.toLocaleDateString();
+			_hr_min = _today.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+			ground_ctx.save();
+
+			ground_ctx.font = clock_font;
+			ground_ctx.setLineDash([]);
+			ground_ctx.lineWidth = clock_line_width;
+
+			ground_ctx.textAlign = 'center';
+			ground_ctx.textBaseline = 'middle';
+			let _xMiddle = ground.width / 2;
+			let _yMiddle = ground.height /2;
+
+			_clockColor = fGetClockColor();
+			ground_ctx.fillStyle = _clockColor;
+			ground_ctx.strokeStyle = _clockColor;
+
+			ground_ctx.fillText(_hr_min, _xMiddle, _yMiddle + (clock_font_height / 2));
+			ground_ctx.strokeText(_day_month_year, _xMiddle, _yMiddle - (clock_font_height / 2));
+
+			ground_ctx.restore();
+		}
+		const fDraw = function() {
+
+			ground_ctx.fillStyle = fGetGroundColor();
+			ground_ctx.fillRect(0, 0, ground.width, ground.height);
+
+			ground_ctx.setLineDash([8, 8]);
+		  ground_ctx.lineDashOffset = ants_direction * ants_offset;
+			ground_ctx.lineWidth = ants_width;
+			ground_ctx.strokeStyle = fGetAntsColor();
+		  ground_ctx.strokeRect(ants_padding, ants_padding, ground.width - 2*ants_padding, ground.height - 2*ants_padding);
+
+			// if (clock_active === 1) {
+			fShowTime();
+			// };
+			// end of function fDraw(...)
+		}
+
+		const fMarch = function() {
+
+		  ants_offset++;
+		  if (ants_offset > 32) { ants_offset = 0; }
+		  fDraw();
+		  setTimeout(fMarch, ants_speed_factor);
+			// end of function fMarch(...)
+		}
+
+		const fArmGroupOfColorButtons = function(arg_GroupButtons, arg_Color) {
+
+			_count = arg_GroupButtons.length;
+			for (_each=0; _each < _count; _each++) {
+				_button = arg_GroupButtons[_each];
+				if (_button.value === arg_Color) {
+					_button.checked = true;
+					break;
+				};// end if
+			};// end for
+			// end of function fArmGroupOfColorButtons(...)
+		}
+		const fActivateColorButtons = function() {
+
+			ground_color_buttons = document.getElementsByName('ground_color');
+			fArmGroupOfColorButtons(ground_color_buttons, ground_color);
+
+			ants_color_buttons = document.getElementsByName('ants_color');
+			fArmGroupOfColorButtons(ants_color_buttons, ants_color);
+
+			clock_color_buttons = document.getElementsByName('clock_color');
+			fArmGroupOfColorButtons(clock_color_buttons, clock_color);
+			// end of function fActivateColorButtons(...)
+		}
+
+		const fGetColor = function(arg_ColorButtons, arg_AltColor) {
+
+			_count = arg_ColorButtons.length;
+			for (_each=0; _each < _count; _each++) {
+				_colorButton = arg_ColorButtons[_each];
+				if (_colorButton.checked) { return _colorButton.value; };// end if
+			};// end for
+
+			return arg_AltColor;
+			// end of fGetColor(...)
+		}
+		const fGetGroundColor = function() {
+
+			return fGetColor(ground_color_buttons, ground_color);
+			// end of function fGetGroundColor(...)
+		}
+		const fGetAntsColor = function() {
+
+			return fGetColor(ants_color_buttons, ants_color);
+			// end of function fGetAntsColor(...)
+		}
+		const fGetClockColor = function() {
+
+			return fGetColor(clock_color_buttons, clock_color);
+			// end of function fGetClockColor(...)
+		}
+
+		const fAdjustColor = function(arg_ColorButtons) {
+
+			let _currentIndex = 0;
+			let _nextIndex = 1;
+			_lastIndex = arg_ColorButtons.length - 1;
+
+			for (_each=0; _each <= _lastIndex; _each++) {
+				_colorButton = arg_ColorButtons[_each];
+				if (_colorButton.checked) {
+					_currentIndex = _each;
+					_nextIndex = _each + 1;
+					break;
+				};// end if
+			};// end for
+
+			if (_nextIndex > _lastIndex) { _nextIndex = 0; };
+			if (_nextIndex < 0) { _nextIndex = _lastIndex; };
+
+			arg_ColorButtons[_currentIndex].checked = 'false';
+			arg_ColorButtons[_nextIndex].checked = 'true';
+			// end of fAdjustColor(...)
+		}
+		const fAdjustGroundColor = function() {
+
+			fAdjustColor(ground_color_buttons);
+			// end of fAdjustGroundColor(...)
+		}
+		const fAdjustAntsColor = function() {
+
+			fAdjustColor(ants_color_buttons);
+			// end of fAdjustAntsColor(...)
+		}
+		const fAdjustClockColor = function() {
+
+			fAdjustColor(clock_color_buttons);
+			// end of fAdjustClockColor(...)
+		}
+
+		const fFlipDirection = function() {
+
+			ants_direction *= -1;
+			// end of function fFlipDirection(...)
+		}
+
+		const fAdjustSpeedFactor = function(arg_How) {
+
+			// if (arg_How === undefined || arg_How == null) { arg_How = '+'; };
+			if (arg_How === '=') { arg_How = ants_speed_factor_switch; };
+
+			if (arg_How == '+') {
+				ants_speed_factor -= ants_speed_factor_step;
+			}
+			if (arg_How == '-' ) {
+				ants_speed_factor += ants_speed_factor_step;
+			}
+
+			if (ants_speed_factor < ants_speed_factor_min) {
+				ants_speed_factor = ants_speed_factor_min;
+				ants_speed_factor_switch = '-'; // when '-', ants_speed_factor goes up, hence reducing the speed!
+			}
+			if (ants_speed_factor > ants_speed_factor_max) {
+				ants_speed_factor = ants_speed_factor_max;
+				ants_speed_factor_switch = '+'; // when '+', ants_speed_factor goes down, hence increasing the speed!
+			}
+
+			// console.log('ants speed factor=' + ants_speed_factor);
+			// console.log('ants speed ' + _how);
+			// end of function fAdjustSpeedFactor(...)
+		}
+
+		const fAdjustAntsWidth = function(arg_How) {
+
+			//if (arg_How === undefined || arg_How == null) { arg_How = '+'; };
+			if (arg_How === '=') { arg_How = ants_width_switch; };
+
+			if (arg_How == '+') {
+				ants_width += ants_width_step;
+			}
+			if (arg_How == '-' ) {
+				ants_width -= ants_width_step;
+			}
+
+			if (ants_width < ants_width_min) {
+				ants_width = ants_width_min;
+				ants_width_switch= '+'; // when '+', ants_width goes up, hence ants get fatter!
+			}
+			if (ants_width > ants_width_max) {
+				ants_width = ants_width_max;
+				ants_width_switch = '-'; // when '-', ants_width goes down, hence ants get skinnier!
+			}
+
+			// console.log('ants width=' + ants_width);
+			// console.log('ants width '+_how);
+			// end of function fAdjustAntsWidth(...)
+		}
+
+		const fDoCrazyClock = function(arg_Eleme) {
+
+			clock_active *= -1; // flip the clock state
+
+			// let _all_typeOfRadio = document.querySelectorAll("input[type='radio']");
+			// let _all_Labels = document.querySelectorAll("label");
+			let _all_Details = document.querySelectorAll("details")
+			let _all_typeOfButton = document.querySelectorAll("button[type='button']");
+
+			let _allButtons = [_all_Details, _all_typeOfButton];// [_all_typeOfRadio, _all_Labels, _all_typeOfButton];
+			_allButtons.forEach(
+				($_Member)=> {
+					$_Member.forEach(
+						($_Button)=> {
+							if ($_Button === arg_Eleme) { return; };
+
+							if (clock_active === 1) { $_Button.hidden = true; };
+							if (clock_active === -1) { $_Button.hidden = false; };
+						}// end of arrow-function ($_Button)
+					);// end forEach() for $_Member
+				}// end of arrow-function ($_Member)
+			);// end forEach() for _allButtons
+
+			if (clock_active === 1) {
+				ground_color_timer =  setInterval(fAdjustGroundColor, ground_color_timer_interval);
+				ants_color_timer = setInterval(fAdjustAntsColor, ants_color_timer_interval);
+				clock_color_timer = setInterval(fAdjustClockColor, clock_color_timer_interval);
+				ants_direction_flip_timer = setInterval(fFlipDirection, ants_direction_flip_timer_interval);
+				ants_speed_factor_timer = setInterval(()=> fAdjustSpeedFactor('='), ants_speed_factor_timer_interval);
+				ants_width_timer = setInterval(()=> fAdjustAntsWidth('='), ants_width_timer_interval);
+			};
+			if (clock_active === -1) {
+				clearInterval(ground_color_timer);
+				clearInterval(ants_color_timer);
+				clearInterval(clock_color_timer);
+				clearInterval(ants_direction_flip_timer);
+				clearInterval(ants_speed_factor_timer);
+				clearInterval(ants_width_timer);
+			};
+			// end of function fDoCrazyClock(...)
+		}
+
+	</script>
+
+</head>
+<body onload='fBodyOnLoad()'>
+
+	<details id='ground_colors'>
+		<summary>colors, GROUND</summary>
+		<div class="wall">
+			<div class="frame">
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_black' name='ground_color' value='black'>
+					<label for='gc_black' style='background-color: black; color:white;'>black</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_silver' name='ground_color' value='silver'>
+					<label for='gc_silver' style='background-color:silver; color:black;'>silver</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_gray' name='ground_color' value='gray'>
+					<label for='gc_gray' style='background-color:gray; color:white;'>gray</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_white' name='ground_color' value='white'>
+					<label for='gc_white' style='background-color:white; color:black;'>white</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_maroon' name='ground_color' value='maroon'>
+					<label for='gc_maroon' style='background-color:maroon; color:white;'>maroon</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_red' name='ground_color' value='red'>
+			    <label for='gc_red' style='background-color:red; color:navy;'>red</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_purple' name='ground_color' value='purple'>
+					<label for='gc_purple' style='background-color:purple; color:white;'>purple</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_fuchsia' name='ground_color' value='fuchsia'>
+					<label for='gc_fuchsia' style='background-color:fuchsia; color:navy;'>fuchsia</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_green' name='ground_color' value='green'>
+			    <label for='gc_green' style='background-color:green; color:white;'>green</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_lime' name='ground_color' value='lime'>
+					<label for='gc_lime' style='background-color:lime; color:black;'>lime</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_olive' name='ground_color' value='olive'>
+					<label for='gc_olive' style='background-color:olive; color:white;'>olive</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_yellow' name='ground_color' value='#ffff99'>
+					<label for='gc_yellow' style='background-color:yellow;'>yellow</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_navy' name='ground_color' value='navy'>
+					<label for='gc_navy' style='background-color:navy; color:white;'>navy</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_blue' name='ground_color' value='blue'>
+			    <label for='gc_blue' style='background-color:blue; color:white;'>blue</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_teal' name='ground_color' value='teal'>
+			    <label for='gc_teal' style='background-color:teal; color:white;'>teal</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_aqua' name='ground_color' value='aqua'>
+			    <label for='gc_aqua' style='background-color:aqua; color:black;'>aqua</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_brown' name='ground_color' value='brown'>
+			    <label for='gc_brown'  style='background-color:brown; color:white;'>brown</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='gc_chocolate' name='ground_color' value='chocolate'>
+			    <label for='gc_chocolate'  style='background-color:chocolate; color:white;'>chocolate</label>
+				</span>
+			</div>
+		</div>
+	</details>
+
+	<details id='clock_colors'>
+		<summary>colors, CLOCK</summary>
+		<div class="wall">
+			<div class="frame">
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_black' name='clock_color' value='black'>
+					<label for='cc_black' style='background-color: black; color:white;'>black</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_silver' name='clock_color' value='silver'>
+					<label for='cc_silver' style='background-color:silver; color:black;'>silver</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_gray' name='clock_color' value='gray'>
+					<label for='cc_gray' style='background-color:gray; color:white;'>gray</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_white' name='clock_color' value='white'>
+					<label for='cc_white' style='background-color:white; color:black;'>white</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_maroon' name='clock_color' value='maroon'>
+					<label for='cc_maroon' style='background-color:maroon; color:white;'>maroon</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_red' name='clock_color' value='red'>
+			    <label for='cc_red' style='background-color:red; color:navy;'>red</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_purple' name='clock_color' value='purple'>
+					<label for='cc_purple' style='background-color:purple; color:white;'>purple</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_fuchsia' name='clock_color' value='fuchsia'>
+					<label for='cc_fuchsia' style='background-color:fuchsia; color:navy;'>fuchsia</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_green' name='clock_color' value='green'>
+			    <label for='cc_green' style='background-color:green; color:white;'>green</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_lime' name='clock_color' value='lime'>
+					<label for='cc_lime' style='background-color:lime; color:black;'>lime</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_olive' name='clock_color' value='olive'>
+					<label for='cc_olive' style='background-color:olive; color:white;'>olive</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_yellow' name='clock_color' value='yellow'>
+					<label for='cc_yellow' style='background-color:yellow;'>yellow</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_navy' name='clock_color' value='navy'>
+					<label for='cc_navy' style='background-color:navy; color:white;'>navy</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_blue' name='clock_color' value='blue'>
+			    <label for='cc_blue' style='background-color:blue; color:white;'>blue</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_teal' name='clock_color' value='teal'>
+			    <label for='cc_teal' style='background-color:teal; color:white;'>teal</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_aqua' name='clock_color' value='aqua'>
+			    <label for='cc_aqua' style='background-color:aqua; color:black;'>aqua</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_brown' name='clock_color' value='brown'>
+			    <label for='cc_brown'  style='background-color:brown; color:white;'>brown</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='cc_chocolate' name='clock_color' value='chocolate'>
+			    <label for='cc_chocolate'  style='background-color:chocolate; color:white;'>chocolate</label>
+				</span>
+			</div>
+		</div>
+	</details>
+
+	<details id='ants_colors' open>
+		<summary>colors, ANTS</summary>
+		<div class="wall">
+			<div class="frame">
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_black' name='ants_color' value='black'>
+					<label for='ac_black' style='background-color: black; color:white;'>black</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_silver' name='ants_color' value='silver'>
+					<label for='ac_silver' style='background-color:silver; color:black;'>silver</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_gray' name='ants_color' value='gray'>
+					<label for='ac_gray' style='background-color:gray; color:white;'>gray</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_white' name='ants_color' value='white'>
+					<label for='ac_white' style='background-color:white; color:black;'>white</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_maroon' name='ants_color' value='maroon'>
+					<label for='ac_maroon' style='background-color:maroon; color:white;'>maroon</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_red' name='ants_color' value='red'>
+			    <label for='ac_red' style='background-color:red; color:navy;'>red</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_purple' name='ants_color' value='purple'>
+					<label for='ac_purple' style='background-color:purple; color:white;'>purple</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_fuchsia' name='ants_color' value='fuchsia'>
+					<label for='ac_fuchsia' style='background-color:fuchsia; color:navy;'>fuchsia</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_green' name='ants_color' value='green'>
+			    <label for='ac_green' style='background-color:green; color:white;'>green</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_lime' name='ants_color' value='lime'>
+					<label for='ac_lime' style='background-color:lime; color:black;'>lime</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_olive' name='ants_color' value='olive'>
+					<label for='ac_olive' style='background-color:olive; color:white;'>olive</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_yellow' name='ants_color' value='yellow'>
+					<label for='ac_yellow' style='background-color:yellow;'>yellow</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_navy' name='ants_color' value='navy'>
+					<label for='ac_navy' style='background-color:navy; color:white;'>navy</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_blue' name='ants_color' value='blue'>
+			    <label for='ac_blue' style='background-color:blue; color:white;'>blue</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_teal' name='ants_color' value='teal'>
+			    <label for='ac_teal' style='background-color:teal; color:white;'>teal</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_aqua' name='ants_color' value='aqua'>
+			    <label for='ac_aqua' style='background-color:aqua; color:black;'>aqua</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_brown' name='ants_color' value='brown'>
+			    <label for='ac_brown'  style='background-color:brown; color:white;'>brown</label>
+				</span>
+				<span style="white-space:nowrap;">
+					<input type='radio' id='ac_chocolate' name='ants_color' value='chocolate'>
+			    <label for='ac_chocolate'  style='background-color:chocolate; color:white;'>chocolate</label>
+				</span>
+			</div>
+		</div>
+	</details>
+
+	<div class="wall">
+		<div class="frame">
+			<canvas id='ground' width='600' height='600'></canvas>
+		</div>
+	</div>
+
+	<div  class="wall">
+		<div  class="frame">
+			<button type='button' id='ants_direction_button'>change direction of marching</button>
+			<button type='button' id='ants_speed_factor_button_plus'>march faster</button>
+			<button type='button' id='ants_speed_factor_button_minus'>march slower</button>
+
+			<button type='button' id='ants_width_button_plus'>ants fatter</button>
+			<button type='button' id='ants_width_button_minus'>ants skinnier</button>
+
+			<button type='button' id='clock_button'>clock</button>
+		</div>
+	</div>
+
+	<p id='display_1'></p>
+
+</body>
+</html>
